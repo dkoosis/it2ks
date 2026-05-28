@@ -43,20 +43,9 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	go func() {
-		t := time.NewTicker(2 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				if err := w.Flush(); err != nil {
-					log.Printf("it2ks: periodic flush: %v", err)
-				}
-			}
-		}
-	}()
+	// Periodic flush goroutine is owned by the Writer; deferred Close above
+	// joins it before returning so we don't leak the goroutine on shutdown.
+	w.StartFlusher(2 * time.Second)
 
 	if err := runWithBackoff(ctx, *wsURL, cfg, w); err != nil {
 		// Flush before exiting so partial buffers reach disk; launchd sees

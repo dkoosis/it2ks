@@ -1,6 +1,7 @@
 package writer
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,5 +128,102 @@ func TestWriter_LogDirMode0700(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o700 {
 		t.Errorf("log dir mode = %o, want 0700", got)
+	}
+}
+
+func TestWriter_WriteAfterCloseReturnsErrClosed(t *testing.T) {
+	dir := t.TempDir()
+	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	w, err := New(dir, func() time.Time { return t0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write([]byte(`{"k":"v"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot files in dir after Close.
+	before, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = w.Write([]byte(`{"k":"after"}`))
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("Write after Close: got %v, want ErrClosed", err)
+	}
+
+	// No new file should have been created by the post-Close Write.
+	after, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("post-Close Write created files: before=%d after=%d", len(before), len(after))
+	}
+}
+
+func TestWriter_FlushAfterCloseReturnsErrClosed(t *testing.T) {
+	dir := t.TempDir()
+	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	w, err := New(dir, func() time.Time { return t0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Flush after Close: got %v, want ErrClosed", err)
+	}
+}
+
+func TestWriter_CloseJoinsFlusherGoroutine(t *testing.T) {
+	dir := t.TempDir()
+	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	w, err := New(dir, func() time.Time { return t0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start a periodic flusher with a short interval so the goroutine
+	// has likely entered its select loop.
+	w.StartFlusher(10 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() { done <- w.Close() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return within 2s — flusher goroutine not joined")
+	}
+
+	// After Close returns, Flush should report ErrClosed (proves the flusher
+	// can no longer touch the writer).
+	if err := w.Flush(); !errors.Is(err, ErrClosed) {
+		t.Errorf("Flush after Close: got %v, want ErrClosed", err)
+	}
+}
+
+func TestWriter_CloseIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	w, err := New(dir, func() time.Time { return t0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
 	}
 }
