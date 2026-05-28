@@ -27,8 +27,17 @@ type Deps struct {
 
 // Run consumes notifications until the channel closes or ctx is cancelled.
 // Per-event errors are logged but never abort the loop.
+//
+// A SessionRecord JSON line is emitted before the first Event of each new
+// (sid, app) pair, and re-emitted after a UTC day rollover so each day's file
+// is self-contained for downstream consumers.
 func Run(ctx context.Context, d Deps) error {
 	cache := NewAppCache(5*time.Second, d.ResolveApp, d.Now)
+
+	// Session-index table: maps "sid|app" → index. Reset on day rollover.
+	sessions := map[string]int{}
+	nextIdx := 0
+	curDate := ""
 
 	for {
 		select {
@@ -42,14 +51,34 @@ func Run(ctx context.Context, d Deps) error {
 			if ks == nil {
 				continue
 			}
-			app := cache.Get(ks.GetSession())
+			sid := ks.GetSession()
+			app := cache.Get(sid)
 			if !d.Filter.Allow(app) {
 				continue
 			}
 			now := d.Now()
-			mono := now.Sub(d.MonoStart).Nanoseconds()
+			date := now.UTC().Format("2006-01-02")
+			if date != curDate {
+				sessions = map[string]int{}
+				nextIdx = 0
+				curDate = date
+			}
 			wall := now.UTC().Format(time.RFC3339Nano)
-			ev := NewEvent(ks, app, mono, wall, d.IncludeChars)
+			key := sid + "|" + app
+			idx, found := sessions[key]
+			if !found {
+				idx = nextIdx
+				sessions[key] = idx
+				nextIdx++
+				rec := SessionRecord{Type: "session", S: idx, SID: sid, App: app, T0: wall}
+				if line, err := json.Marshal(rec); err != nil {
+					log.Printf("it2ks: marshal session: %v", err)
+				} else if err := d.Writer.Write(line); err != nil {
+					log.Printf("it2ks: write session: %v", err)
+				}
+			}
+			mono := now.Sub(d.MonoStart).Nanoseconds()
+			ev := NewEvent(ks, idx, mono, wall, d.IncludeChars)
 
 			line, err := json.Marshal(ev)
 			if err != nil {
