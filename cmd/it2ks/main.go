@@ -68,6 +68,10 @@ type PermanentError struct{ Err error }
 func (e *PermanentError) Error() string { return "permanent: " + e.Err.Error() }
 func (e *PermanentError) Unwrap() error { return e.Err }
 
+// errAdvancedSubscribeStatus is the sentinel for non-OK / non-ALREADY_SUBSCRIBED
+// responses to the advanced-keystroke subscribe RPC.
+var errAdvancedSubscribeStatus = errors.New("advanced subscribe rejected")
+
 // resetThreshold: if a connectAndRun call lasted at least this long before
 // erroring, the connection was healthy and the backoff resets to initial.
 const resetThreshold = 30 * time.Second
@@ -120,13 +124,13 @@ func runWithBackoffLoop(ctx context.Context, connect func(context.Context) error
 
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // ctx cancel is clean shutdown, not an error to surface
 		}
 		start := clk.now()
 		err := connect(ctx)
 		elapsed := clk.now().Sub(start)
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // ctx cancel is clean shutdown, not an error to surface
 		}
 
 		var perm *PermanentError
@@ -146,7 +150,7 @@ func runWithBackoffLoop(ctx context.Context, connect func(context.Context) error
 		}
 
 		if err := clk.sleep(ctx, backoff); err != nil {
-			return nil
+			return nil //nolint:nilerr // sleep err means ctx cancelled → clean shutdown
 		}
 		if backoff < maxBackoff {
 			backoff *= 2
@@ -300,7 +304,7 @@ func sendAdvancedKeystrokeSubscribe(ctx context.Context, c *client.Client) error
 		s := nr.GetStatus()
 		if s != pb.NotificationResponse_OK && s != pb.NotificationResponse_ALREADY_SUBSCRIBED {
 			// API-level rejection isn't recoverable by retrying — surface it.
-			return &PermanentError{Err: fmt.Errorf("advanced subscribe status: %v", s)}
+			return &PermanentError{Err: fmt.Errorf("%w: %v", errAdvancedSubscribeStatus, s)}
 		}
 	}
 	return nil

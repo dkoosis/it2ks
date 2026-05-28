@@ -9,6 +9,8 @@ import (
 	pb "github.com/tmc/it2/proto"
 )
 
+var errTeardownBoom = errors.New("boom")
+
 // fakeTeardownClient records the Close + Unsubscribe + SendRequest calls so
 // tests can assert teardown order and semantics.
 type fakeTeardownClient struct {
@@ -108,7 +110,7 @@ func TestTeardownUsesShortDeadline(t *testing.T) {
 // TestTeardownClosesEvenWhenUnsubscribeFails: best-effort means errors from
 // the unsubscribe path must not skip Close.
 func TestTeardownClosesEvenWhenUnsubscribeFails(t *testing.T) {
-	f := &fakeTeardownClient{sendErr: errors.New("boom")}
+	f := &fakeTeardownClient{sendErr: errTeardownBoom}
 	teardownClient(context.Background(), f)
 	if f.closeCalls != 1 {
 		t.Errorf("Close calls=%d, want 1 even when unsubscribe errored", f.closeCalls)

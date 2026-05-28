@@ -125,35 +125,42 @@ func runCapture(ctx context.Context, queue chan queuedEvent, d Deps) error {
 				continue
 			}
 			ev := queuedEvent{now: d.Now(), sid: ks.GetSession(), ks: ks}
-
-			select {
-			case queue <- ev:
-				// fast path
-			default:
-				// Queue full → drop OLDEST, then enqueue this one. Only one
-				// sender (this goroutine) so no race for the slot we free.
-				select {
-				case <-queue:
-					if d.DropCounter != nil {
-						d.DropCounter.Add(1)
-					}
-					dropsLogged++
-					// Bound log noise: first drop + every 1024 thereafter.
-					if dropsLogged == 1 || dropsLogged%1024 == 0 {
-						log.Printf("it2ks: event queue full; dropped oldest (total drops in this Run: %d)", dropsLogged)
-					}
-				default:
-				}
-				select {
-				case queue <- ev:
-				default:
-					if d.DropCounter != nil {
-						d.DropCounter.Add(1)
-					}
-					dropsLogged++
-				}
-			}
+			enqueueOrDropOldest(queue, ev, d.DropCounter, &dropsLogged)
 		}
+	}
+}
+
+// enqueueOrDropOldest tries the fast path first; on a full queue, drops the
+// OLDEST queued event and enqueues ev. Only one sender (the capture goroutine)
+// runs this, so the slot we free can't be re-filled by a concurrent producer.
+func enqueueOrDropOldest(queue chan queuedEvent, ev queuedEvent, dropCounter *atomic.Uint64, dropsLogged *uint64) {
+	select {
+	case queue <- ev:
+		return // fast path
+	default:
+	}
+	// Queue full → drop oldest, then try to enqueue.
+	select {
+	case <-queue:
+		bumpDrops(dropCounter, dropsLogged)
+	default:
+	}
+	select {
+	case queue <- ev:
+	default:
+		bumpDrops(dropCounter, dropsLogged)
+	}
+}
+
+// bumpDrops increments drop counters and emits a bounded log line.
+func bumpDrops(dropCounter *atomic.Uint64, dropsLogged *uint64) {
+	if dropCounter != nil {
+		dropCounter.Add(1)
+	}
+	*dropsLogged++
+	// Bound log noise: first drop + every 1024 thereafter.
+	if *dropsLogged == 1 || *dropsLogged%1024 == 0 {
+		log.Printf("it2ks: event queue full; dropped oldest (total drops in this Run: %d)", *dropsLogged)
 	}
 }
 

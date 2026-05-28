@@ -37,16 +37,6 @@ func (b *blockingWriter) Write(t time.Time, line []byte) error {
 
 func (b *blockingWriter) Release() { close(b.release) }
 
-func (b *blockingWriter) snapshot() ([]time.Time, []string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	t := make([]time.Time, len(b.times))
-	copy(t, b.times)
-	l := make([]string, len(b.lines))
-	copy(l, b.lines)
-	return t, l
-}
-
 // Test wm5: a writer that blocks must not back-pressure the notification
 // channel. The capture goroutine should drain notifications into the
 // internal queue and accept >queueSize events without the ws-side blocking.
@@ -55,7 +45,7 @@ func TestBackpressure_SlowWriter_DoesNotBlockWsReader(t *testing.T) {
 
 	const n = defaultQueueSize + 16 // beyond queue capacity
 	notifs := make(chan *pb.Notification, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		notifs <- ksNotif("sid-A")
 	}
 	close(notifs)
@@ -82,10 +72,8 @@ func TestBackpressure_SlowWriter_DoesNotBlockWsReader(t *testing.T) {
 
 	// Notif chan must drain rapidly (ws-side not blocked). Poll briefly.
 	deadline := time.After(2 * time.Second)
-	for {
-		if len(notifs) == 0 {
-			break
-		}
+	for len(notifs) != 0 {
+
 		select {
 		case <-deadline:
 			t.Fatalf("ws notification channel did not drain — capture goroutine blocked on writer (remaining=%d)", len(notifs))
@@ -118,7 +106,7 @@ func TestBackpressure_QueueFull_DropsOldest_BumpsCounter(t *testing.T) {
 	const minDrops = extra - 1
 
 	notifs := make(chan *pb.Notification, total)
-	for i := 0; i < total; i++ {
+	for range total {
 		notifs <- ksNotif("sid-A")
 	}
 	close(notifs)
@@ -147,10 +135,8 @@ func TestBackpressure_QueueFull_DropsOldest_BumpsCounter(t *testing.T) {
 	// Wait for capture to drain notifs (it should, fast, even though worker
 	// is blocked — overflows go to the drop counter).
 	deadline := time.After(2 * time.Second)
-	for {
-		if len(notifs) == 0 {
-			break
-		}
+	for len(notifs) != 0 {
+
 		select {
 		case <-deadline:
 			t.Fatalf("notif chan did not drain; remaining=%d", len(notifs))
@@ -226,7 +212,7 @@ func TestBackpressure_GracefulShutdown_DrainsQueue(t *testing.T) {
 
 	const n = 32
 	notifs := make(chan *pb.Notification, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		notifs <- ksNotif("sid-A")
 	}
 	// Don't close notifs — we'll cancel ctx instead, simulating SIGTERM.

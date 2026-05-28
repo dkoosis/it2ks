@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var errSessionGone = errors.New("session gone")
+
 func TestAppCache_CachesWithinTTL(t *testing.T) {
 	var calls atomic.Int32
 	resolver := func(sid string) (string, error) {
@@ -67,7 +69,7 @@ func TestAppCache_EvictsStaleEntries(t *testing.T) {
 	// Populate many distinct sessions, then jump well past the eviction
 	// horizon (TTL × 10) and Get again. Stale entries should be dropped
 	// lazily so the map does not grow unbounded.
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_ = c.Get("stale-" + strconv.Itoa(i))
 	}
 
@@ -85,7 +87,7 @@ func TestAppCache_EvictsStaleEntries(t *testing.T) {
 
 func TestAppCache_ResolverErrorReturnsUnknown(t *testing.T) {
 	resolver := func(sid string) (string, error) {
-		return "", errors.New("session gone")
+		return "", errSessionGone
 	}
 	now := time.Unix(0, 0)
 	c := NewAppCache(5*time.Second, resolver, func() time.Time { return now })
@@ -118,12 +120,12 @@ func TestAppCache_ResolverErrorIsNegativelyCached(t *testing.T) {
 	var calls atomic.Int32
 	resolver := func(sid string) (string, error) {
 		calls.Add(1)
-		return "", errors.New("session gone")
+		return "", errSessionGone
 	}
 	now := time.Unix(0, 0)
 	c := NewAppCache(5*time.Second, resolver, func() time.Time { return now })
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if got := c.Get("sess-dead"); got != "unknown" {
 			t.Errorf("Get #%d on error = %q, want unknown", i, got)
 		}
@@ -141,7 +143,7 @@ func TestAppCache_ResolverErrorRefreshAfterNegTTL(t *testing.T) {
 	resolver := func(sid string) (string, error) {
 		calls.Add(1)
 		if calls.Load() == 1 {
-			return "", errors.New("session gone")
+			return "", errSessionGone
 		}
 		return "claude", nil
 	}

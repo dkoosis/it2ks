@@ -13,6 +13,8 @@ import (
 	pb "github.com/tmc/it2/proto"
 )
 
+var errInjectedWriteFailure = errors.New("injected write failure")
+
 // recordingWriter captures every (time, line) pair written.
 type recordingWriter struct {
 	mu    sync.Mutex
@@ -29,7 +31,7 @@ func (r *recordingWriter) Write(t time.Time, line []byte) error {
 	if r.failHeader != nil && r.failHeader(s) {
 		// Reset so subsequent writes succeed.
 		r.failHeader = nil
-		return errors.New("injected write failure")
+		return errInjectedWriteFailure
 	}
 	r.times = append(r.times, t)
 	r.lines = append(r.lines, s)
@@ -50,9 +52,9 @@ func ksNotif(sid string) *pb.Notification {
 	action := pb.KeystrokeNotification_KEY_DOWN
 	return &pb.Notification{
 		KeystrokeNotification: &pb.KeystrokeNotification{
-			Session:  &s,
-			KeyCode:  &keycode,
-			Action:   &action,
+			Session: &s,
+			KeyCode: &keycode,
+			Action:  &action,
 		},
 	}
 }

@@ -11,6 +11,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// errUnsupportedTildeForm is returned when a path uses tilde notation we
+// don't expand (bare "~", "~user/"). Only "~/" prefix is supported.
+var errUnsupportedTildeForm = errors.New(`unsupported tilde form: only "~/" prefix is supported (bare "~" and "~user/" are not expanded)`)
+
 type Config struct {
 	LogDir       string   `toml:"log_dir"`
 	IncludeChars bool     `toml:"include_chars"`
@@ -84,5 +88,5 @@ func expandHome(p string) (string, error) {
 		}
 		return filepath.Join(home, p[2:]), nil
 	}
-	return "", fmt.Errorf("unsupported tilde form %q: only \"~/\" prefix is supported (bare \"~\" and \"~user/\" are not expanded)", p)
+	return "", fmt.Errorf("%w: %q", errUnsupportedTildeForm, p)
 }
