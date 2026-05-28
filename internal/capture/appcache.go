@@ -8,6 +8,11 @@ import (
 // Resolver returns the foreground process name for a session ID.
 type Resolver func(sessionID string) (string, error)
 
+// evictionFactor controls lazy eviction: entries older than TTL × this factor
+// are dropped on Get to bound memory across long-lived daemon runs with churn
+// from ephemeral iTerm sessions (tmux, repeated tab open/close).
+const evictionFactor = 10
+
 // AppCache caches session → app mappings, refreshing each entry after TTL.
 // Used to avoid querying iTerm2 for `jobName` on every keystroke.
 //
@@ -15,6 +20,10 @@ type Resolver func(sessionID string) (string, error)
 // but Get is not strictly serializable across goroutines: two concurrent Gets
 // on the same expired key may both invoke the resolver and the later write
 // wins. Acceptable here since the resolver returns the same value either way.
+//
+// Memory: Get performs lazy eviction, dropping entries older than
+// TTL × evictionFactor. Bounds map size for long-running daemons without
+// requiring an explicit Forget(sid) hook on iTerm session-end notifications.
 type AppCache struct {
 	ttl      time.Duration
 	resolver Resolver
@@ -42,8 +51,10 @@ func NewAppCache(ttl time.Duration, resolver Resolver, now func() time.Time) *Ap
 // Returns "unknown" if the resolver errors.
 func (c *AppCache) Get(sessionID string) string {
 	c.mu.Lock()
+	now := c.now()
+	c.evictLocked(now)
 	e, ok := c.entries[sessionID]
-	fresh := ok && c.now().Sub(e.fetchedAt) < c.ttl
+	fresh := ok && now.Sub(e.fetchedAt) < c.ttl
 	c.mu.Unlock()
 
 	if fresh {
@@ -60,4 +71,15 @@ func (c *AppCache) Get(sessionID string) string {
 	c.mu.Unlock()
 
 	return app
+}
+
+// evictLocked drops entries older than TTL × evictionFactor.
+// Caller must hold c.mu.
+func (c *AppCache) evictLocked(now time.Time) {
+	horizon := c.ttl * evictionFactor
+	for sid, e := range c.entries {
+		if now.Sub(e.fetchedAt) > horizon {
+			delete(c.entries, sid)
+		}
+	}
 }
