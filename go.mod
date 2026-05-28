@@ -2,7 +2,10 @@ module github.com/dkoosis/it2ks
 
 go 1.26.3
 
-require github.com/tmc/it2 v0.0.0
+require (
+	github.com/BurntSushi/toml v1.6.0
+	github.com/tmc/it2 v0.0.0
+)
 
 require (
 	github.com/gorilla/websocket v1.5.3 // indirect
