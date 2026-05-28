@@ -3,3 +3,8 @@
 .dolt/
 *.db
 .beads-credential-key
+
+# it2ks build artifacts
+/it2ks
+/dist/
+*.test
