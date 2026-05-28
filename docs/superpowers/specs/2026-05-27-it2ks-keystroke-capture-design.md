@@ -104,6 +104,8 @@ include_chars = true
 
 [filter]
 # Only capture these apps. Empty = capture all.
+# Matching is case-insensitive and whitespace-trimmed
+# (e.g. "Vim", " vim ", "VIM" all match app "vim").
 apps_include = []
 # Exclude these apps. Applied after apps_include.
 apps_exclude = []
