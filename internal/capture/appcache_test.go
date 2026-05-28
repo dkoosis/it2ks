@@ -94,3 +94,43 @@ func TestAppCache_ResolverErrorReturnsUnknown(t *testing.T) {
 		t.Errorf("Get on error = %q, want unknown", got)
 	}
 }
+
+// Resolver returning ("", nil) — e.g., iTerm2 session opened before its child
+// process spawned — must not surface app="" to downstream records. Treat as
+// a resolver miss and return the same sentinel as the error path.
+func TestAppCache_EmptyResolverResultReturnsUnknown(t *testing.T) {
+	resolver := func(sid string) (string, error) {
+		return "", nil
+	}
+	now := time.Unix(0, 0)
+	c := NewAppCache(5*time.Second, resolver, func() time.Time { return now })
+
+	if got := c.Get("sess-1"); got != "unknown" {
+		t.Errorf("Get on empty success = %q, want unknown", got)
+	}
+}
+
+// Empty resolver result must not be cached: a subsequent Get should retry the
+// resolver in case the child process has since spawned.
+func TestAppCache_EmptyResolverResultNotCached(t *testing.T) {
+	var calls atomic.Int32
+	resolver := func(sid string) (string, error) {
+		calls.Add(1)
+		if calls.Load() == 1 {
+			return "", nil
+		}
+		return "claude", nil
+	}
+	now := time.Unix(0, 0)
+	c := NewAppCache(5*time.Second, resolver, func() time.Time { return now })
+
+	if got := c.Get("sess-1"); got != "unknown" {
+		t.Errorf("first Get = %q, want unknown", got)
+	}
+	if got := c.Get("sess-1"); got != "claude" {
+		t.Errorf("second Get = %q, want claude (empty must not be cached)", got)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("resolver calls = %d, want 2", calls.Load())
+	}
+}

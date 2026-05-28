@@ -48,7 +48,7 @@ func NewAppCache(ttl time.Duration, resolver Resolver, now func() time.Time) *Ap
 }
 
 // Get returns the cached app name for sessionID, refreshing it if stale.
-// Returns "unknown" if the resolver errors.
+// Returns "unknown" if the resolver errors or returns an empty string.
 func (c *AppCache) Get(sessionID string) string {
 	c.mu.Lock()
 	now := c.now()
@@ -63,6 +63,13 @@ func (c *AppCache) Get(sessionID string) string {
 
 	app, err := c.resolver(sessionID)
 	if err != nil {
+		return "unknown"
+	}
+	// Treat empty resolver result as a miss (iTerm2 returns "" for a session
+	// whose child process hasn't spawned yet — e.g., GetVariable("jobName")
+	// on a brand-new tab). Surfacing "" downstream produces ambiguous records.
+	// Don't cache: a subsequent Get should retry in case the process appears.
+	if app == "" {
 		return "unknown"
 	}
 
