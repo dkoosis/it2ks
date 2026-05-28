@@ -74,11 +74,11 @@ Two record types, both newline-delimited JSON.
 | `ts`    | monotonic timestamp, nanoseconds since process start     |
 | `wall`  | wall-clock time, RFC3339 microseconds, UTC               |
 | `s`     | session index (joins to the session record)              |
-| `act`   | `down` — iTerm2 currently only publishes key-down events |
+| `act`   | `down`, `up`, or `flags` (modifier-only transition)      |
 | `key`   | iTerm2 keycode (integer)                                 |
 | `char`  | rendered character if printable, else empty              |
 
-> **Note on `act`:** iTerm2's API does not currently emit key-up events, so dwell time (key-down → key-up duration) is not directly recoverable. Inter-key interval (down → next down) and most flight-time and pause-distribution analyses still work. If iTerm2 ever adds key-up, this schema extends cleanly.
+> **Note on `act`:** it2ks subscribes with `advanced=true`, so iTerm2 emits key-down, key-up, and flags-changed events. Dwell time (down → matching up) is recoverable. Expect fewer `up` events than `down`: key auto-repeat produces multiple downs per single up, and pure modifier transitions surface as `flags` rather than down/up pairs.
 
 A validator lives at `scripts/validate-log.go` — `go run scripts/validate-log.go ~/.it2ks/logs/$(date -u +%Y-%m-%d).jsonl` to sanity-check a day's log.
 
@@ -94,7 +94,7 @@ The schema and capture discipline are chosen so that standard keystroke-analysis
 | Per-app conditioning                   | foreground app tag      | yes       |
 | Digraph / trigraph flight time         | ordered down events     | yes       |
 | Keystroke-dynamics identity (TypeNet)  | flight time, per-app    | yes       |
-| Dwell time (key-down → key-up)         | key-up events           | **no** (iTerm2 limitation) |
+| Dwell time (key-down → key-up)         | key-up events           | yes (with auto-repeat caveat) |
 
 Downstream tools are expected to compute baselines per `(app, time-of-day)` and report deviations, not absolute thresholds — individual variance dominates population effects in this domain.
 
