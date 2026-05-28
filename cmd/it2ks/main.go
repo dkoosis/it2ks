@@ -164,11 +164,66 @@ func runWithBackoffLoop(ctx context.Context, connect func(context.Context) error
 	}
 }
 
+// teardownClientAPI is the slice of *client.Client teardownClient needs;
+// declared as an interface so the cleanup path is unit-testable without a
+// live iTerm2 websocket.
+type teardownClientAPI interface {
+	Close() error
+	UnsubscribeFromNotifications(ctx context.Context, notifType, sessionID string) error
+	SendRequest(ctx context.Context, msg *pb.ClientOriginatedMessage) (*pb.ServerOriginatedMessage, error)
+}
+
+// teardownTimeout bounds the shutdown unsubscribe + Close round-trips so a
+// hung iTerm2 can't block the daemon's exit / reconnect path indefinitely.
+const teardownTimeout = 2 * time.Second
+
+// teardownClient best-effort tears a connected it2 client down: it sends an
+// advanced-keystroke Unsubscribe so iTerm2 stops emitting to the dead
+// socket, then always Close()s the client to release the websocket FD +
+// reader goroutine. Errors are logged but never block Close.
+func teardownClient(_ context.Context, c teardownClientAPI) {
+	// Always use a fresh bounded context — caller's ctx may already be
+	// cancelled (SIGTERM path) and we still want to send the unsubscribe.
+	ctx, cancel := context.WithTimeout(context.Background(), teardownTimeout)
+	defer cancel()
+
+	subscribe := false
+	notifType := pb.NotificationType_NOTIFY_ON_KEYSTROKE
+	advanced := true
+	session := "all"
+	msg := &pb.ClientOriginatedMessage{
+		Submessage: &pb.ClientOriginatedMessage_NotificationRequest{
+			NotificationRequest: &pb.NotificationRequest{
+				Session:          &session,
+				Subscribe:        &subscribe,
+				NotificationType: &notifType,
+				Arguments: &pb.NotificationRequest_KeystrokeMonitorRequest{
+					KeystrokeMonitorRequest: &pb.KeystrokeMonitorRequest{
+						Advanced: &advanced,
+					},
+				},
+			},
+		},
+	}
+	if _, err := c.SendRequest(ctx, msg); err != nil {
+		log.Printf("it2ks: teardown advanced unsubscribe: %v", err)
+	}
+
+	if err := c.Close(); err != nil {
+		log.Printf("it2ks: teardown client close: %v", err)
+	}
+}
+
 func connectAndRun(ctx context.Context, wsURL string, cfg config.Config, w *writer.Writer, monoStart time.Time) error {
 	c := client.New(wsURL)
 	if err := c.Connect(ctx); err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
+	// Tear down on every exit path (error return, normal channel close,
+	// SIGTERM cancellation). Without this, each reconnect leaks a websocket
+	// FD + reader goroutine, and iTerm2 keeps pushing keystrokes to the
+	// orphaned socket until TCP keepalive eventually trips.
+	defer teardownClient(ctx, c)
 
 	// iTerm2 requires an explicit session sentinel for keystroke subscriptions;
 	// the empty string is rejected as SESSION_NOT_FOUND. "all" subscribes to every session.
