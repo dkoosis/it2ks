@@ -10,6 +10,11 @@ type Resolver func(sessionID string) (string, error)
 
 // AppCache caches session → app mappings, refreshing each entry after TTL.
 // Used to avoid querying iTerm2 for `jobName` on every keystroke.
+//
+// Designed for a single Get caller (the capture loop). Mutex protects the map
+// but Get is not strictly serializable across goroutines: two concurrent Gets
+// on the same expired key may both invoke the resolver and the later write
+// wins. Acceptable here since the resolver returns the same value either way.
 type AppCache struct {
 	ttl      time.Duration
 	resolver Resolver

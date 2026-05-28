@@ -46,8 +46,9 @@ func Run(ctx context.Context, d Deps) error {
 			if !d.Filter.Allow(app) {
 				continue
 			}
-			mono := d.Now().Sub(d.MonoStart).Nanoseconds()
-			wall := d.Now().UTC().Format(time.RFC3339Nano)
+			now := d.Now()
+			mono := now.Sub(d.MonoStart).Nanoseconds()
+			wall := now.UTC().Format(time.RFC3339Nano)
 			ev := NewEvent(ks, app, mono, wall, d.IncludeChars)
 
 			line, err := json.Marshal(ev)

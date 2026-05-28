@@ -80,21 +80,22 @@ func (w *Writer) rotateLocked(date string) error {
 }
 
 func (w *Writer) closeLocked() error {
+	var firstErr error
 	if w.buf != nil {
 		if err := w.buf.Flush(); err != nil {
-			return err
+			firstErr = err
 		}
 	}
 	if w.file != nil {
-		if err := w.file.Sync(); err != nil {
-			return err
+		if err := w.file.Sync(); err != nil && firstErr == nil {
+			firstErr = err
 		}
-		if err := w.file.Close(); err != nil {
-			return err
+		if err := w.file.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 	w.file = nil
 	w.buf = nil
 	w.curDate = ""
-	return nil
+	return firstErr
 }
