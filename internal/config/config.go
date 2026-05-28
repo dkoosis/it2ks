@@ -47,7 +47,11 @@ func Load(path string) (Config, error) {
 	}
 
 	if ff.Capture.LogDir != "" {
-		cfg.LogDir = expandHome(ff.Capture.LogDir)
+		expanded, err := expandHome(ff.Capture.LogDir)
+		if err != nil {
+			return Config{}, fmt.Errorf("config %s: log_dir: %w", path, err)
+		}
+		cfg.LogDir = expanded
 	}
 	if ff.Capture.IncludeChars != nil {
 		cfg.IncludeChars = *ff.Capture.IncludeChars
@@ -65,11 +69,20 @@ func defaults() Config {
 	}
 }
 
-func expandHome(p string) string {
-	if len(p) >= 2 && p[:2] == "~/" {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, p[2:])
-		}
+// expandHome expands a leading "~/" to the current user's home directory.
+// Any other leading "~" form (bare "~", "~user/...") is rejected as a
+// validation error — silently treating those as literal paths caused logs
+// to land in unexpected directories under launchd.
+func expandHome(p string) (string, error) {
+	if len(p) == 0 || p[0] != '~' {
+		return p, nil
 	}
-	return p
+	if p == "~/" || (len(p) >= 2 && p[:2] == "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home dir: %w", err)
+		}
+		return filepath.Join(home, p[2:]), nil
+	}
+	return "", fmt.Errorf("unsupported tilde form %q: only \"~/\" prefix is supported (bare \"~\" and \"~user/\" are not expanded)", p)
 }
