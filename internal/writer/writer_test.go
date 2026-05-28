@@ -89,3 +89,43 @@ func TestWriter_CreatesDirIfMissing(t *testing.T) {
 		t.Errorf("expected dated file: %v", err)
 	}
 }
+
+func TestWriter_LogFileMode0600(t *testing.T) {
+	dir := t.TempDir()
+	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	w, err := New(dir, func() time.Time { return t0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if err := w.Write([]byte(`{"k":"v"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "2026-05-27.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("log file mode = %o, want 0600", got)
+	}
+}
+
+func TestWriter_LogDirMode0700(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested-logs")
+	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	w, err := New(dir, func() time.Time { return t0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("log dir mode = %o, want 0700", got)
+	}
+}

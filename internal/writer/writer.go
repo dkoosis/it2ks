@@ -21,7 +21,7 @@ type Writer struct {
 }
 
 func New(dir string, now func() time.Time) (*Writer, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 	return &Writer{dir: dir, now: now}, nil
@@ -69,7 +69,7 @@ func (w *Writer) rotateLocked(date string) error {
 		return err
 	}
 	path := filepath.Join(w.dir, date+".jsonl")
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
