@@ -65,7 +65,7 @@ func defaults() Config {
 	home, _ := os.UserHomeDir()
 	return Config{
 		LogDir:       filepath.Join(home, ".it2ks", "logs"),
-		IncludeChars: true,
+		IncludeChars: false,
 	}
 }
 

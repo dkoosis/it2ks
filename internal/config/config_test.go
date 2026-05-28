@@ -11,8 +11,8 @@ func TestLoad_MissingFileReturnsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() returned error for missing file: %v", err)
 	}
-	if !cfg.IncludeChars {
-		t.Errorf("IncludeChars default = false, want true")
+	if cfg.IncludeChars {
+		t.Errorf("IncludeChars default = true, want false (opt-in)")
 	}
 	if cfg.LogDir == "" {
 		t.Errorf("LogDir default is empty, want non-empty path")
