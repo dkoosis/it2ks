@@ -110,6 +110,61 @@ func TestAppCache_EmptyResolverResultReturnsUnknown(t *testing.T) {
 	}
 }
 
+// Resolver errors must be negatively cached for a short TTL so a burst of
+// keystrokes from a dead/erroring session does not produce a websocket storm
+// (one resolver round-trip per event). The bd-it2ks-f7u acceptance: 10 Gets
+// within 1s after a resolver error → resolver called at most twice.
+func TestAppCache_ResolverErrorIsNegativelyCached(t *testing.T) {
+	var calls atomic.Int32
+	resolver := func(sid string) (string, error) {
+		calls.Add(1)
+		return "", errors.New("session gone")
+	}
+	now := time.Unix(0, 0)
+	c := NewAppCache(5*time.Second, resolver, func() time.Time { return now })
+
+	for i := 0; i < 10; i++ {
+		if got := c.Get("sess-dead"); got != "unknown" {
+			t.Errorf("Get #%d on error = %q, want unknown", i, got)
+		}
+	}
+	if got := calls.Load(); got > 2 {
+		t.Errorf("resolver calls = %d, want <= 2 (negative cache should suppress storm)", got)
+	}
+}
+
+// After the negative-cache TTL elapses, the resolver must be invoked again so
+// a session that starts erroring (transient) and then recovers can be resolved
+// to its real app name.
+func TestAppCache_ResolverErrorRefreshAfterNegTTL(t *testing.T) {
+	var calls atomic.Int32
+	resolver := func(sid string) (string, error) {
+		calls.Add(1)
+		if calls.Load() == 1 {
+			return "", errors.New("session gone")
+		}
+		return "claude", nil
+	}
+	now := time.Unix(0, 0)
+	clock := func() time.Time { return now }
+	c := NewAppCache(5*time.Second, resolver, clock)
+
+	if got := c.Get("sess-1"); got != "unknown" {
+		t.Errorf("first Get = %q, want unknown", got)
+	}
+
+	// Advance past the negative-cache TTL. Use a generous jump so the test
+	// stays correct even if negTTL is tuned within the 1–2s acceptance range.
+	now = now.Add(10 * time.Second)
+
+	if got := c.Get("sess-1"); got != "claude" {
+		t.Errorf("Get after negTTL = %q, want claude (resolver must be reinvoked)", got)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("resolver calls = %d, want 2", calls.Load())
+	}
+}
+
 // Empty resolver result must not be cached: a subsequent Get should retry the
 // resolver in case the child process has since spawned.
 func TestAppCache_EmptyResolverResultNotCached(t *testing.T) {
