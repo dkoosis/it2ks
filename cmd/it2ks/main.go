@@ -184,25 +184,7 @@ func teardownClient(_ context.Context, c teardownClientAPI) {
 	ctx, cancel := context.WithTimeout(context.Background(), teardownTimeout)
 	defer cancel()
 
-	subscribe := false
-	notifType := pb.NotificationType_NOTIFY_ON_KEYSTROKE
-	advanced := true
-	session := "all"
-	msg := &pb.ClientOriginatedMessage{
-		Submessage: &pb.ClientOriginatedMessage_NotificationRequest{
-			NotificationRequest: &pb.NotificationRequest{
-				Session:          &session,
-				Subscribe:        &subscribe,
-				NotificationType: &notifType,
-				Arguments: &pb.NotificationRequest_KeystrokeMonitorRequest{
-					KeystrokeMonitorRequest: &pb.KeystrokeMonitorRequest{
-						Advanced: &advanced,
-					},
-				},
-			},
-		},
-	}
-	if _, err := c.SendRequest(ctx, msg); err != nil {
+	if _, err := c.SendRequest(ctx, advancedKeystrokeRequest(false)); err != nil {
 		log.Printf("it2ks: teardown advanced unsubscribe: %v", err)
 	}
 
@@ -276,13 +258,13 @@ func connectAndRun(ctx context.Context, wsURL string, cfg config.Config, w *writ
 // iTerm2 surfaces fast and the negative-cache (f7u) takes over.
 const resolveTimeout = 1 * time.Second
 
-func sendAdvancedKeystrokeSubscribe(ctx context.Context, c *client.Client) error {
-	subscribe := true
+// advancedKeystrokeRequest builds the subscribe/unsubscribe request for
+// iTerm2's advanced keystroke monitor on the "all" session sentinel.
+func advancedKeystrokeRequest(subscribe bool) *pb.ClientOriginatedMessage {
 	notifType := pb.NotificationType_NOTIFY_ON_KEYSTROKE
 	advanced := true
 	session := "all"
-
-	msg := &pb.ClientOriginatedMessage{
+	return &pb.ClientOriginatedMessage{
 		Submessage: &pb.ClientOriginatedMessage_NotificationRequest{
 			NotificationRequest: &pb.NotificationRequest{
 				Session:          &session,
@@ -296,7 +278,10 @@ func sendAdvancedKeystrokeSubscribe(ctx context.Context, c *client.Client) error
 			},
 		},
 	}
-	resp, err := c.SendRequest(ctx, msg)
+}
+
+func sendAdvancedKeystrokeSubscribe(ctx context.Context, c *client.Client) error {
+	resp, err := c.SendRequest(ctx, advancedKeystrokeRequest(true))
 	if err != nil {
 		return err
 	}
