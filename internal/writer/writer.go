@@ -17,6 +17,22 @@ import (
 // rotateLocked() back to an open file that nothing would ever close.
 var ErrClosed = errors.New("writer: closed")
 
+// syncDir fsyncs a directory so that recent dirent changes (file create/unlink)
+// are durably committed. Exposed as a var so tests can intercept calls.
+// Errors are returned to the caller; rotateLocked logs and continues because
+// directory durability is best-effort, not a correctness gate.
+var syncDir = func(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		d.Close()
+		return err
+	}
+	return d.Close()
+}
+
 type Writer struct {
 	dir string
 	now func() time.Time
@@ -150,6 +166,13 @@ func (w *Writer) rotateLocked(date string) error {
 	w.file = f
 	w.buf = bufio.NewWriterSize(f, 32*1024)
 	w.curDate = date
+	// Fsync parent dir so the new file's dirent is durable. Without this,
+	// a crash between os.OpenFile and the next dir fsync could leave the
+	// file inode allocated but no directory entry → unrecoverable. Logged
+	// and ignored on error: this is a durability hint, not correctness.
+	if err := syncDir(w.dir); err != nil {
+		log.Printf("writer: fsync parent dir %s: %v", w.dir, err)
+	}
 	return nil
 }
 
