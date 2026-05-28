@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -102,9 +103,19 @@ func connectAndRun(ctx context.Context, wsURL string, cfg config.Config, w *writ
 		return fmt.Errorf("connect: %w", err)
 	}
 
-	notifications, err := c.SubscribeToGenericNotifications(ctx, "keystroke", "")
+	// iTerm2 requires an explicit session sentinel for keystroke subscriptions;
+	// the empty string is rejected as SESSION_NOT_FOUND. "all" subscribes to every session.
+	notifications, err := c.SubscribeToGenericNotifications(ctx, "keystroke", "all")
 	if err != nil {
 		return fmt.Errorf("subscribe keystroke: %w", err)
+	}
+
+	// Tear down the basic subscription so the advanced re-subscribe is not a no-op
+	// (iTerm2 returns ALREADY_SUBSCRIBED and ignores the new arguments otherwise).
+	// The notification channel's reader goroutine survives this — it reads all
+	// notifications from c.messages regardless of subscription state.
+	if err := c.UnsubscribeFromNotifications(ctx, "keystroke", "all"); err != nil {
+		return fmt.Errorf("unsubscribe basic keystroke: %w", err)
 	}
 
 	if err := sendAdvancedKeystrokeSubscribe(ctx, c); err != nil {
@@ -115,7 +126,16 @@ func connectAndRun(ctx context.Context, wsURL string, cfg config.Config, w *writ
 		Notifications: notifications,
 		Writer:        writerAdapter{w},
 		ResolveApp: func(sid string) (string, error) {
-			return c.GetVariable(ctx, sid, "jobName")
+			v, err := c.GetVariable(ctx, sid, "jobName")
+			if err != nil {
+				return "", err
+			}
+			// iTerm2 returns variables JSON-encoded; unwrap if it's a JSON string.
+			var unquoted string
+			if json.Unmarshal([]byte(v), &unquoted) == nil {
+				return unquoted, nil
+			}
+			return v, nil
 		},
 		Filter:       capture.NewFilter(cfg.AppsInclude, cfg.AppsExclude),
 		IncludeChars: cfg.IncludeChars,
@@ -129,10 +149,12 @@ func sendAdvancedKeystrokeSubscribe(ctx context.Context, c *client.Client) error
 	subscribe := true
 	notifType := pb.NotificationType_NOTIFY_ON_KEYSTROKE
 	advanced := true
+	session := "all"
 
 	msg := &pb.ClientOriginatedMessage{
 		Submessage: &pb.ClientOriginatedMessage_NotificationRequest{
 			NotificationRequest: &pb.NotificationRequest{
+				Session:          &session,
 				Subscribe:        &subscribe,
 				NotificationType: &notifType,
 				Arguments: &pb.NotificationRequest_KeystrokeMonitorRequest{
