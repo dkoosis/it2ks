@@ -1,9 +1,12 @@
 package capture
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	pb "github.com/tmc/it2/proto"
 )
@@ -94,5 +97,104 @@ func TestActionString(t *testing.T) {
 		if got := actionString(in); got != want {
 			t.Errorf("actionString(%v) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+type fakeWriter struct {
+	mu    sync.Mutex
+	lines [][]byte
+}
+
+func (w *fakeWriter) Write(p []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	dup := make([]byte, len(p))
+	copy(dup, p)
+	w.lines = append(w.lines, dup)
+	return nil
+}
+
+func (w *fakeWriter) get() [][]byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([][]byte(nil), w.lines...)
+}
+
+func TestRun_PassesEventsThroughToWriter(t *testing.T) {
+	ch := make(chan *pb.Notification, 4)
+	chars, raw := "a", "a"
+	keyCode := int32(0)
+	action := pb.KeystrokeNotification_KEY_DOWN
+	sess := "s1"
+	ch <- &pb.Notification{
+		KeystrokeNotification: &pb.KeystrokeNotification{
+			Characters:                  &chars,
+			CharactersIgnoringModifiers: &raw,
+			KeyCode:                     &keyCode,
+			Session:                     &sess,
+			Action:                      &action,
+		},
+	}
+	close(ch)
+
+	w := &fakeWriter{}
+	deps := Deps{
+		Notifications: ch,
+		Writer:        w,
+		ResolveApp:    func(sid string) (string, error) { return "claude", nil },
+		IncludeChars:  true,
+		Filter:        NewFilter(nil, nil),
+		Now:           time.Now,
+		MonoStart:     time.Now(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := Run(ctx, deps); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	lines := w.get()
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines, want 1", len(lines))
+	}
+	var ev Event
+	if err := json.Unmarshal(lines[0], &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.App != "claude" || ev.Char != "a" || ev.Act != "down" {
+		t.Errorf("event = %+v, want app=claude char=a act=down", ev)
+	}
+}
+
+func TestRun_DropsFilteredApps(t *testing.T) {
+	ch := make(chan *pb.Notification, 1)
+	chars, raw := "x", "x"
+	keyCode := int32(0)
+	action := pb.KeystrokeNotification_KEY_DOWN
+	sess := "s1"
+	ch <- &pb.Notification{KeystrokeNotification: &pb.KeystrokeNotification{
+		Characters: &chars, CharactersIgnoringModifiers: &raw,
+		KeyCode: &keyCode, Session: &sess, Action: &action,
+	}}
+	close(ch)
+
+	w := &fakeWriter{}
+	deps := Deps{
+		Notifications: ch,
+		Writer:        w,
+		ResolveApp:    func(sid string) (string, error) { return "1password", nil },
+		IncludeChars:  true,
+		Filter:        NewFilter(nil, []string{"1password"}),
+		Now:           time.Now,
+		MonoStart:     time.Now(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := Run(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.get()) != 0 {
+		t.Errorf("expected 0 lines after filter; got %d", len(w.get()))
 	}
 }
