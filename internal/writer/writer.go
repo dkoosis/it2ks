@@ -41,16 +41,20 @@ func New(dir string, now func() time.Time) (*Writer, error) {
 	return &Writer{dir: dir, now: now}, nil
 }
 
-// Write appends one JSON line (the trailing newline is added).
+// Write appends one JSON line (the trailing newline is added). The caller
+// passes the event time so capture's single-clock-per-event contract
+// (it2ks-mty) is honored — the writer MUST NOT recompute now() for the
+// date-bucket decision or the midnight-split race re-opens.
+//
 // Returns ErrClosed if the writer has been closed.
-func (w *Writer) Write(line []byte) error {
+func (w *Writer) Write(t time.Time, line []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
 		return ErrClosed
 	}
 
-	date := w.now().UTC().Format("2006-01-02")
+	date := t.UTC().Format("2006-01-02")
 	if date != w.curDate {
 		if err := w.rotateLocked(date); err != nil {
 			return err
