@@ -70,3 +70,31 @@ log_dir = "~/custom/logs"
 		t.Errorf("LogDir = %q, want %q", cfg.LogDir, want)
 	}
 }
+
+func TestLoad_RejectsBareTildeLogDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.toml")
+	if err := os.WriteFile(path, []byte(`
+[capture]
+log_dir = "~"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("Load() returned nil error for log_dir = \"~\", want validation error")
+	}
+}
+
+func TestLoad_RejectsTildeUserLogDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.toml")
+	if err := os.WriteFile(path, []byte(`
+[capture]
+log_dir = "~user/logs"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("Load() returned nil error for log_dir = \"~user/logs\", want validation error")
+	}
+}
