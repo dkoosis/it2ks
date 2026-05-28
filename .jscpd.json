@@ -1,0 +1,12 @@
+{
+  "ignore": [
+    "**/*_test.go",
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/vendor/**",
+    "**/testdata/**"
+  ],
+  "reporters": ["console"],
+  "absolute": false,
+  "gitignore": true
+}
