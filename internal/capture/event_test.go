@@ -134,7 +134,7 @@ type fakeWriter struct {
 	lines [][]byte
 }
 
-func (w *fakeWriter) Write(p []byte) error {
+func (w *fakeWriter) Write(_ time.Time, p []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	dup := make([]byte, len(p))
@@ -171,6 +171,7 @@ func TestRun_EmitsSessionHeaderBeforeFirstEvent(t *testing.T) {
 	deps := Deps{
 		Notifications: ch,
 		Writer:        w,
+		Sessions:      NewSessionTable(),
 		ResolveApp:    func(sid string) (string, error) { return "claude", nil },
 		IncludeChars:  true,
 		Filter:        NewFilter(nil, nil),
@@ -228,6 +229,7 @@ func TestRun_NewSessionWhenAppChanges(t *testing.T) {
 	deps := Deps{
 		Notifications: ch,
 		Writer:        w,
+		Sessions:      NewSessionTable(),
 		// New AppCache TTL is 5s, so successive calls would normally cache.
 		// Force re-resolution by giving each call a unique app via a counter,
 		// but only on the second logical event by advancing Now beyond TTL.
@@ -279,6 +281,7 @@ func TestRun_DropsFilteredApps(t *testing.T) {
 	deps := Deps{
 		Notifications: ch,
 		Writer:        w,
+		Sessions:      NewSessionTable(),
 		ResolveApp:    func(sid string) (string, error) { return "1password", nil },
 		IncludeChars:  true,
 		Filter:        NewFilter(nil, []string{"1password"}),

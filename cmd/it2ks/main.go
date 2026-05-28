@@ -102,8 +102,12 @@ func realClock() clock {
 
 func runWithBackoff(ctx context.Context, wsURL string, cfg config.Config, w *writer.Writer) error {
 	monoStart := time.Now()
+	// SessionTable is lifted out of capture.Run so reconnects reuse it
+	// (it2ks-kke). Without this, every reconnect restarts s=0 and produces
+	// duplicate {type:"session",s:0,...} headers in the same day's file.
+	sessions := capture.NewSessionTable()
 	connect := func(ctx context.Context) error {
-		return connectAndRun(ctx, wsURL, cfg, w, monoStart)
+		return connectAndRun(ctx, wsURL, cfg, w, monoStart, sessions)
 	}
 	return runWithBackoffLoop(ctx, connect, realClock())
 }
@@ -203,7 +207,7 @@ func teardownClient(_ context.Context, c teardownClientAPI) {
 	}
 }
 
-func connectAndRun(ctx context.Context, wsURL string, cfg config.Config, w *writer.Writer, monoStart time.Time) error {
+func connectAndRun(ctx context.Context, wsURL string, cfg config.Config, w *writer.Writer, monoStart time.Time, sessions *capture.SessionTable) error {
 	c := client.New(wsURL)
 	if err := c.Connect(ctx); err != nil {
 		return fmt.Errorf("connect: %w", err)
@@ -236,8 +240,15 @@ func connectAndRun(ctx context.Context, wsURL string, cfg config.Config, w *writ
 	deps := capture.Deps{
 		Notifications: notifications,
 		Writer:        writerAdapter{w},
+		Sessions:      sessions,
 		ResolveApp: func(sid string) (string, error) {
-			v, err := c.GetVariable(ctx, sid, "jobName")
+			// Bound the GetVariable round-trip so a hung iTerm2 jobName lookup
+			// can't block the capture loop (it2ks-fz1). The AppCache's
+			// negative-cache (f7u) absorbs the resulting error so we don't
+			// re-fire the resolver per keystroke on a dead session.
+			rctx, cancel := context.WithTimeout(ctx, resolveTimeout)
+			defer cancel()
+			v, err := c.GetVariable(rctx, sid, "jobName")
 			if err != nil {
 				return "", err
 			}
@@ -255,6 +266,11 @@ func connectAndRun(ctx context.Context, wsURL string, cfg config.Config, w *writ
 	}
 	return capture.Run(ctx, deps)
 }
+
+// resolveTimeout bounds the per-keystroke GetVariable("jobName") round-trip.
+// 1s is well above a healthy local-websocket RTT but short enough that a hung
+// iTerm2 surfaces fast and the negative-cache (f7u) takes over.
+const resolveTimeout = 1 * time.Second
 
 func sendAdvancedKeystrokeSubscribe(ctx context.Context, c *client.Client) error {
 	subscribe := true
@@ -292,4 +308,4 @@ func sendAdvancedKeystrokeSubscribe(ctx context.Context, c *client.Client) error
 
 type writerAdapter struct{ w *writer.Writer }
 
-func (a writerAdapter) Write(p []byte) error { return a.w.Write(p) }
+func (a writerAdapter) Write(t time.Time, p []byte) error { return a.w.Write(t, p) }

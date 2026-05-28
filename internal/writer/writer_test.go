@@ -18,7 +18,7 @@ func TestWriter_WritesLineToDatedFile(t *testing.T) {
 	}
 	defer w.Close()
 
-	if err := w.Write([]byte(`{"k":"v"}`)); err != nil {
+	if err := w.Write(t0, []byte(`{"k":"v"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Flush(); err != nil {
@@ -44,12 +44,12 @@ func TestWriter_RollsOverOnDateChange(t *testing.T) {
 	}
 	defer w.Close()
 
-	if err := w.Write([]byte(`{"day":1}`)); err != nil {
+	if err := w.Write(now, []byte(`{"day":1}`)); err != nil {
 		t.Fatal(err)
 	}
 
 	now = time.Date(2026, 5, 28, 0, 0, 1, 0, time.UTC)
-	if err := w.Write([]byte(`{"day":2}`)); err != nil {
+	if err := w.Write(now, []byte(`{"day":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Flush(); err != nil {
@@ -80,7 +80,7 @@ func TestWriter_CreatesDirIfMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if err := w.Write([]byte(`{}`)); err != nil {
+	if err := w.Write(t0, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Flush(); err != nil {
@@ -99,7 +99,7 @@ func TestWriter_LogFileMode0600(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if err := w.Write([]byte(`{"k":"v"}`)); err != nil {
+	if err := w.Write(t0, []byte(`{"k":"v"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Flush(); err != nil {
@@ -138,7 +138,7 @@ func TestWriter_WriteAfterCloseReturnsErrClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Write([]byte(`{"k":"v"}`)); err != nil {
+	if err := w.Write(t0, []byte(`{"k":"v"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
@@ -151,7 +151,7 @@ func TestWriter_WriteAfterCloseReturnsErrClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = w.Write([]byte(`{"k":"after"}`))
+	err = w.Write(t0, []byte(`{"k":"after"}`))
 	if !errors.Is(err, ErrClosed) {
 		t.Fatalf("Write after Close: got %v, want ErrClosed", err)
 	}
