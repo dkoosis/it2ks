@@ -233,7 +233,7 @@ func TestWriter_RotationFsyncsParentDir(t *testing.T) {
 	defer w.Close()
 
 	// First write creates the day-1 file → must fsync parent dir.
-	if err := w.Write([]byte(`{"day":1}`)); err != nil {
+	if err := w.Write(now, []byte(`{"day":1}`)); err != nil {
 		t.Fatal(err)
 	}
 	if len(synced) < 1 {
@@ -245,7 +245,7 @@ func TestWriter_RotationFsyncsParentDir(t *testing.T) {
 
 	// Date change → rotation creates day-2 file → must fsync parent dir again.
 	now = time.Date(2026, 5, 28, 0, 0, 1, 0, time.UTC)
-	if err := w.Write([]byte(`{"day":2}`)); err != nil {
+	if err := w.Write(now, []byte(`{"day":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	if len(synced) < 2 {
