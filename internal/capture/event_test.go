@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,10 +245,10 @@ func TestRun_NewSessionWhenAppChanges(t *testing.T) {
 		Filter:       NewFilter(nil, nil),
 		Now: (func() func() time.Time {
 			base := time.Now()
-			calls := 0
+			var calls atomic.Int32
 			return func() time.Time {
-				calls++
-				return base.Add(time.Duration(calls) * 10 * time.Second)
+				c := calls.Add(1)
+				return base.Add(time.Duration(c) * 10 * time.Second)
 			}
 		})(),
 		MonoStart: time.Now(),
