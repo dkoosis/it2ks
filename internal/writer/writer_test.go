@@ -213,6 +213,49 @@ func TestWriter_CloseJoinsFlusherGoroutine(t *testing.T) {
 	}
 }
 
+func TestWriter_RotationFsyncsParentDir(t *testing.T) {
+	dir := t.TempDir()
+
+	var synced []string
+	orig := syncDir
+	syncDir = func(path string) error {
+		synced = append(synced, path)
+		return orig(path)
+	}
+	t.Cleanup(func() { syncDir = orig })
+
+	now := time.Date(2026, 5, 27, 23, 59, 59, 0, time.UTC)
+	clock := func() time.Time { return now }
+	w, err := New(dir, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	// First write creates the day-1 file → must fsync parent dir.
+	if err := w.Write([]byte(`{"day":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(synced) < 1 {
+		t.Fatalf("expected parent dir fsync after first file creation; calls=%v", synced)
+	}
+	if synced[0] != dir {
+		t.Errorf("syncDir[0] = %q, want %q", synced[0], dir)
+	}
+
+	// Date change → rotation creates day-2 file → must fsync parent dir again.
+	now = time.Date(2026, 5, 28, 0, 0, 1, 0, time.UTC)
+	if err := w.Write([]byte(`{"day":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(synced) < 2 {
+		t.Fatalf("expected parent dir fsync after rotation; calls=%v", synced)
+	}
+	if synced[1] != dir {
+		t.Errorf("syncDir[1] = %q, want %q", synced[1], dir)
+	}
+}
+
 func TestWriter_CloseIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	t0 := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
