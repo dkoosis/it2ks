@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -57,7 +58,12 @@ func main() {
 		}
 	}()
 
-	runWithBackoff(ctx, *wsURL, cfg, w)
+	if err := runWithBackoff(ctx, *wsURL, cfg, w); err != nil {
+		// Flush before exiting so partial buffers reach disk; launchd sees
+		// the non-zero exit and surfaces the error in stderr logs.
+		_ = w.Flush()
+		log.Fatalf("it2ks: %v", err)
+	}
 }
 
 func defaultConfigPath() string {
@@ -65,28 +71,89 @@ func defaultConfigPath() string {
 	return filepath.Join(home, ".it2ks", "config.toml")
 }
 
-func runWithBackoff(ctx context.Context, wsURL string, cfg config.Config, w *writer.Writer) {
-	backoff := time.Second
-	const maxBackoff = 60 * time.Second
+// PermanentError wraps an unrecoverable failure (e.g. iTerm2 API rejecting
+// our subscribe request). runWithBackoffLoop exits when it sees one; launchd
+// surfaces the non-zero exit so the daemon doesn't spin silently forever.
+type PermanentError struct{ Err error }
+
+func (e *PermanentError) Error() string { return "permanent: " + e.Err.Error() }
+func (e *PermanentError) Unwrap() error { return e.Err }
+
+// resetThreshold: if a connectAndRun call lasted at least this long before
+// erroring, the connection was healthy and the backoff resets to initial.
+const resetThreshold = 30 * time.Second
+
+const (
+	initialBackoff = time.Second
+	maxBackoff     = 60 * time.Second
+)
+
+// clock abstracts time for tests.
+type clock struct {
+	now   func() time.Time
+	sleep func(ctx context.Context, d time.Duration) error
+}
+
+// fakeClock is an alias used by tests (defined here so tests can construct one).
+type fakeClock = clock
+
+func realClock() clock {
+	return clock{
+		now: time.Now,
+		sleep: func(ctx context.Context, d time.Duration) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(d):
+				return nil
+			}
+		},
+	}
+}
+
+func runWithBackoff(ctx context.Context, wsURL string, cfg config.Config, w *writer.Writer) error {
 	monoStart := time.Now()
+	connect := func(ctx context.Context) error {
+		return connectAndRun(ctx, wsURL, cfg, w, monoStart)
+	}
+	return runWithBackoffLoop(ctx, connect, realClock())
+}
+
+// runWithBackoffLoop drives connect with exponential backoff. It resets the
+// backoff when a call lasted >= resetThreshold (a healthy connection that
+// later dropped), and exits when connect returns a *PermanentError.
+func runWithBackoffLoop(ctx context.Context, connect func(context.Context) error, clk clock) error {
+	backoff := initialBackoff
 
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
-		err := connectAndRun(ctx, wsURL, cfg, w, monoStart)
+		start := clk.now()
+		err := connect(ctx)
+		elapsed := clk.now().Sub(start)
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
+
+		var perm *PermanentError
+		if errors.As(err, &perm) {
+			log.Printf("it2ks: permanent error, exiting loop: %v", err)
+			return err
+		}
+
+		if elapsed >= resetThreshold {
+			backoff = initialBackoff
+		}
+
 		if err != nil {
-			log.Printf("it2ks: session ended: %v (retry in %s)", err, backoff)
+			log.Printf("it2ks: session ended after %s: %v (retry in %s)", elapsed, err, backoff)
 		} else {
-			log.Printf("it2ks: notification channel closed (retry in %s)", backoff)
+			log.Printf("it2ks: notification channel closed after %s (retry in %s)", elapsed, backoff)
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff):
+
+		if err := clk.sleep(ctx, backoff); err != nil {
+			return nil
 		}
 		if backoff < maxBackoff {
 			backoff *= 2
@@ -172,7 +239,8 @@ func sendAdvancedKeystrokeSubscribe(ctx context.Context, c *client.Client) error
 	if nr := resp.GetNotificationResponse(); nr != nil {
 		s := nr.GetStatus()
 		if s != pb.NotificationResponse_OK && s != pb.NotificationResponse_ALREADY_SUBSCRIBED {
-			return fmt.Errorf("advanced subscribe status: %v", s)
+			// API-level rejection isn't recoverable by retrying — surface it.
+			return &PermanentError{Err: fmt.Errorf("advanced subscribe status: %v", s)}
 		}
 	}
 	return nil
